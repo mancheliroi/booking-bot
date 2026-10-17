@@ -9,7 +9,8 @@ from aiogram.types import BotCommand
 
 from app.config import settings
 from app.db import init_db, make_engine, make_sessionmaker
-from app.handlers import admin, user
+from app.handlers import company_admin, super_admin, user
+from app.scheduler import poll_payments
 
 
 async def main() -> None:
@@ -25,15 +26,21 @@ async def main() -> None:
     await init_db(engine, sessionmaker)
 
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    me = await bot.get_me()
     await bot.set_my_commands([BotCommand(command="start", description="Главное меню")])
 
     dp = Dispatcher()
     dp["sessionmaker"] = sessionmaker
-    dp.include_routers(admin.router, user.router)
+    dp["bot_username"] = me.username
+    # super_admin и company_admin идут раньше user — у них свои строгие фильтры
+    # по правам доступа, а user.router ловит всё остальное (клиентов).
+    dp.include_routers(super_admin.router, company_admin.router, user.router)
 
+    payments_task = asyncio.create_task(poll_payments(bot, sessionmaker, settings.payment_hold_minutes))
     try:
         await dp.start_polling(bot)
     finally:
+        payments_task.cancel()
         await engine.dispose()
 
 

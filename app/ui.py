@@ -4,10 +4,10 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from aiogram.filters.callback_data import CallbackData
-from aiogram.types import InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from app.db import Booking, Service
+from app.db import Booking, Company, CompanyAdmin, Master, Service
 from app.repo import as_utc
 
 WEEKDAYS = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
@@ -15,6 +15,15 @@ WEEKDAYS = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
 BTN_BOOK = "📅 Записаться"
 BTN_MY = "📋 Мои записи"
 BTN_CONTACTS = "ℹ️ Контакты"
+
+NOT_LINKED_TEXT = (
+    "Этот бот обслуживает разные компании по отдельной ссылке.\n"
+    "Если вам прислали ссылку-приглашение — перейдите по ней, и я вас запомню."
+)
+
+
+class MasterCb(CallbackData, prefix="mstr"):
+    id: int
 
 
 class ServiceCb(CallbackData, prefix="svc"):
@@ -34,6 +43,14 @@ class ConfirmCb(CallbackData, prefix="cf"):
 
 
 class CancelCb(CallbackData, prefix="cn"):
+    id: int
+
+
+class PayCheckCb(CallbackData, prefix="paych"):
+    id: int
+
+
+class CompanyCb(CallbackData, prefix="co"):
     id: int
 
 
@@ -68,6 +85,14 @@ def phone_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
+def masters_kb(masters: list[Master]) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    for m in masters:
+        kb.button(text=m.name, callback_data=MasterCb(id=m.id))
+    kb.adjust(1)
+    return kb.as_markup()
+
+
 def services_kb(services: list[Service]) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for s in services:
@@ -99,6 +124,13 @@ def confirm_kb() -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
+def payment_kb(confirmation_url: str, booking_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="💳 Оплатить", url=confirmation_url))
+    kb.row(InlineKeyboardButton(text="🔄 Я оплатил(а)", callback_data=PayCheckCb(id=booking_id).pack()))
+    return kb.as_markup()
+
+
 def my_bookings_kb(bookings: list[Booking]) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for b in bookings:
@@ -108,4 +140,41 @@ def my_bookings_kb(bookings: list[Booking]) -> InlineKeyboardMarkup:
 
 
 def booking_line(b: Booking, tz: ZoneInfo) -> str:
-    return f"№{b.id} · {b.service.name} · {fmt_dt(b.start_at, tz)}"
+    mark = "⏳ ожидает оплаты · " if b.status.value == "awaiting_payment" else ""
+    return f"№{b.id} · {mark}{b.service.name} · {fmt_dt(b.start_at, tz)}"
+
+
+def companies_kb(companies: list[Company]) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    for c in companies:
+        mark = "" if c.is_active else "🚫 "
+        kb.button(text=f"{mark}{c.name}", callback_data=CompanyCb(id=c.id))
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def deep_link(bot_username: str, slug: str) -> str:
+    return f"https://t.me/{bot_username}?start={slug}"
+
+
+def company_card(company: Company, admins: list[CompanyAdmin], bot_username: str) -> str:
+    status = "✅ активна" if company.is_active else "🚫 отключена"
+    admin_lines = "\n".join(f"  • {a.telegram_id}{' (владелец)' if a.is_owner else ''}" for a in admins) or "  — нет"
+    return (
+        f"<b>{company.name}</b>\n"
+        f"Статус: {status}\n"
+        f"Ссылка для клиентов: {deep_link(bot_username, company.slug)}\n\n"
+        f"Админы:\n{admin_lines}"
+    )
+
+
+def fmt_stats(stats: dict, title: str) -> str:
+    top = "\n".join(f"  {i + 1}. {name} — {count}" for i, (name, count) in enumerate(stats["top_services"])) or "  — нет данных"
+    return (
+        f"<b>Статистика — {title}</b>\n\n"
+        f"📅 Предстоящих записей: {stats['upcoming_count']}\n"
+        f"🆕 Новых за неделю: {stats['new_this_week']}\n"
+        f"👥 Клиентов всего: {stats['unique_clients']}\n"
+        f"💰 Выручка за 30 дней (по активным записям): {fmt_price(stats['revenue_month'])}\n\n"
+        f"Популярные услуги за 30 дней:\n{top}"
+    )
