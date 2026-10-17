@@ -82,3 +82,45 @@ def test_parse_day():
     assert parse_day("05.01", today) == date(2027, 1, 5)
     assert parse_day("2026-11-03", today) == date(2026, 11, 3)
     assert parse_day("ерунда", today) is None
+
+
+@pytest.mark.asyncio
+async def test_admin_can_add_edit_and_hide_services(sm):
+    async with sm() as s:
+        new = await repo.add_service(s, name="Маникюр", duration_min=90, price=2000)
+        await repo.update_service(s, new.id, price=2500, name="Маникюр + покрытие")
+        visible = [x.name for x in await repo.list_services(s)]
+        assert "Маникюр + покрытие" in visible
+
+        await repo.update_service(s, new.id, active=False)
+        assert "Маникюр + покрытие" not in [x.name for x in await repo.list_services(s)]
+        all_names = [x.name for x in await repo.list_services(s, include_hidden=True)]
+        assert "Маникюр + покрытие" in all_names
+        assert (await repo.get_service(s, new.id)).price == 2500
+
+
+@pytest.mark.asyncio
+async def test_update_service_rejects_unknown_fields(sm):
+    async with sm() as s:
+        with pytest.raises(ValueError):
+            await repo.update_service(s, 1, id=999)
+
+
+@pytest.mark.asyncio
+async def test_texts_have_defaults_and_can_be_changed(sm):
+    async with sm() as s:
+        assert "Здравствуйте" in await repo.get_text(s, "welcome")
+        await repo.set_text(s, "welcome", "Привет из салона «Ромашка»!")
+        assert await repo.get_text(s, "welcome") == "Привет из салона «Ромашка»!"
+        await repo.set_text(s, "welcome", "Второй вариант")
+        assert await repo.get_text(s, "welcome") == "Второй вариант"
+        with pytest.raises(ValueError):
+            await repo.set_text(s, "unknown", "x")
+
+
+def test_parse_int():
+    from app.handlers.admin import parse_int
+
+    assert parse_int("1 500", min_value=0, max_value=10_000) == 1500
+    assert parse_int("abc", min_value=0, max_value=10) is None
+    assert parse_int("2", min_value=5, max_value=10) is None

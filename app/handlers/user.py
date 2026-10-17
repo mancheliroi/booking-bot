@@ -29,19 +29,26 @@ def now_utc() -> datetime:
 
 
 @router.message(CommandStart())
-async def start(message: Message, state: FSMContext) -> None:
+async def start(message: Message, state: FSMContext, sessionmaker: async_sessionmaker) -> None:
     await state.clear()
-    await message.answer(
-        f"Здравствуйте, {message.from_user.first_name}! 👋\n\n"
-        "Я помогу записаться на услугу: выберите время — и всё готово.",
-        reply_markup=ui.main_menu(),
-    )
+    async with sessionmaker() as session:
+        text = await repo.get_text(session, "welcome")
+    await message.answer(text, reply_markup=ui.main_menu())
+
+
+@router.message(F.text == ui.BTN_CONTACTS)
+async def contacts(message: Message, sessionmaker: async_sessionmaker) -> None:
+    async with sessionmaker() as session:
+        await message.answer(await repo.get_text(session, "contacts"))
 
 
 @router.message(F.text == ui.BTN_BOOK)
 async def choose_service(message: Message, state: FSMContext, sessionmaker: async_sessionmaker) -> None:
     async with sessionmaker() as session:
         services = await repo.list_services(session)
+    if not services:
+        await message.answer("Сейчас запись недоступна. Загляните чуть позже 🙏")
+        return
     await state.set_state(BookingForm.service)
     await message.answer("Выберите услугу:", reply_markup=ui.services_kb(services))
 
@@ -158,9 +165,12 @@ async def finish(
             await call.message.edit_text("Ой, это время только что заняли 😔 Выберите другое через «Записаться».")
             await call.answer()
             return
+        after_text = await repo.get_text(session, "booked")
 
     when = ui.fmt_dt(start_at, settings.tz)
-    await call.message.edit_text(f"✅ Вы записаны!\n\n<b>{service.name}</b>, {when}\nНомер записи: {booking.id}")
+    await call.message.edit_text(
+        f"✅ Вы записаны!\n\n<b>{service.name}</b>, {when}\nНомер записи: {booking.id}\n\n{after_text}"
+    )
     await call.answer()
 
     for admin_id in settings.admin_ids:

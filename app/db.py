@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, select
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -22,6 +22,8 @@ class Service(Base):
     name: Mapped[str] = mapped_column(String(100))
     duration_min: Mapped[int] = mapped_column(Integer)
     price: Mapped[int] = mapped_column(Integer)
+    # Скрытая услуга не видна клиентам, но старые записи на неё сохраняются
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class Booking(Base):
@@ -40,12 +42,37 @@ class Booking(Base):
     service: Mapped[Service] = relationship(lazy="joined")
 
 
+class BotText(Base):
+    """Тексты бота, которые администратор меняет прямо в Telegram."""
+
+    __tablename__ = "texts"
+
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+
+
 DEFAULT_SERVICES = [
     ("Стрижка", 60, 1500),
     ("Окрашивание", 120, 4000),
     ("Укладка", 60, 1200),
     ("Консультация", 30, 0),
 ]
+
+# Ключ → (название для админа, текст по умолчанию)
+EDITABLE_TEXTS = {
+    "welcome": (
+        "Приветствие",
+        "Здравствуйте! 👋\n\nЯ помогу записаться на услугу: выберите время — и всё готово.",
+    ),
+    "booked": (
+        "Сообщение после записи",
+        "Ждём вас! Если планы изменятся — отмените запись в разделе «Мои записи».",
+    ),
+    "contacts": (
+        "Контакты",
+        "📍 Адрес: укажите адрес\n📞 Телефон: укажите телефон",
+    ),
+}
 
 
 def make_engine(url: str) -> AsyncEngine:
@@ -60,8 +87,6 @@ async def init_db(engine: AsyncEngine, sessionmaker: async_sessionmaker) -> None
     """Создаёт таблицы и заполняет услуги по умолчанию, если их нет."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
-    from sqlalchemy import select
 
     async with sessionmaker() as session:
         exists = await session.scalar(select(Service.id).limit(1))

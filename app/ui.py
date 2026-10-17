@@ -14,6 +14,7 @@ WEEKDAYS = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
 
 BTN_BOOK = "📅 Записаться"
 BTN_MY = "📋 Мои записи"
+BTN_CONTACTS = "ℹ️ Контакты"
 
 
 class ServiceCb(CallbackData, prefix="svc"):
@@ -51,7 +52,10 @@ def fmt_dt(dt: datetime, tz: ZoneInfo) -> str:
 
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=BTN_BOOK), KeyboardButton(text=BTN_MY)]],
+        keyboard=[
+            [KeyboardButton(text=BTN_BOOK), KeyboardButton(text=BTN_MY)],
+            [KeyboardButton(text=BTN_CONTACTS)],
+        ],
         resize_keyboard=True,
     )
 

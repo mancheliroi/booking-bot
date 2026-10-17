@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import Booking, BookingStatus, Service
+from app.db import EDITABLE_TEXTS, Booking, BookingStatus, BotText, Service
 from app.slots import Interval, overlaps
 
 
@@ -19,12 +19,57 @@ def as_utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
 
 
-async def list_services(session: AsyncSession) -> list[Service]:
-    return list(await session.scalars(select(Service).order_by(Service.id)))
+async def list_services(session: AsyncSession, *, include_hidden: bool = False) -> list[Service]:
+    stmt = select(Service).order_by(Service.id)
+    if not include_hidden:
+        stmt = stmt.where(Service.active.is_(True))
+    return list(await session.scalars(stmt))
 
 
 async def get_service(session: AsyncSession, service_id: int) -> Service | None:
     return await session.get(Service, service_id)
+
+
+SERVICE_FIELDS = {"name", "price", "duration_min", "active"}
+
+
+async def add_service(session: AsyncSession, *, name: str, duration_min: int, price: int) -> Service:
+    service = Service(name=name, duration_min=duration_min, price=price, active=True)
+    session.add(service)
+    await session.commit()
+    await session.refresh(service)
+    return service
+
+
+async def update_service(session: AsyncSession, service_id: int, **changes) -> Service | None:
+    unknown = set(changes) - SERVICE_FIELDS
+    if unknown:
+        raise ValueError(f"Нельзя менять поля: {unknown}")
+    service = await session.get(Service, service_id)
+    if service is None:
+        return None
+    for field, value in changes.items():
+        setattr(service, field, value)
+    await session.commit()
+    return service
+
+
+async def get_text(session: AsyncSession, key: str) -> str:
+    row = await session.get(BotText, key)
+    if row is not None:
+        return row.value
+    return EDITABLE_TEXTS[key][1]
+
+
+async def set_text(session: AsyncSession, key: str, value: str) -> None:
+    if key not in EDITABLE_TEXTS:
+        raise ValueError(f"Неизвестный текст: {key}")
+    row = await session.get(BotText, key)
+    if row is None:
+        session.add(BotText(key=key, value=value))
+    else:
+        row.value = value
+    await session.commit()
 
 
 async def _active_between(session: AsyncSession, start: datetime, end: datetime) -> list[Booking]:
